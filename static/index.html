@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>ZenGuard – TRL Proof Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- Bootstrap 5 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        body { background: #0b1220; color: #e6ecf5; }
+        h5.mb-2 { color: white; }
+        #kpi-events { color: #5dd5ff; }
+        #kpi-high { color: #ff7a7a; }
+        .log-entry { padding: .35rem .5rem .35rem .75rem; border-left: 3px solid #5dd5ff; margin-bottom: .35rem; }
+        .log-mfa { border-color: #ffd166; }
+        .log-isolate { border-color: #ff7a7a; }
+        .log-block { border-color: #5dd5ff; }
+        .badge-act { font-size: .7rem; opacity: .95; }
+        .navbar { background: linear-gradient(90deg, #0e1a34, #0b1220); }
+        .brand-gradient { background: linear-gradient(135deg, #5dd5ff, #7cffc2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .card { background: #0f1a33; border: 1px solid rgba(255,255,255,.06); }
+        .table thead th { color: #bcd3ea; border-color: rgba(255,255,255,.08); }
+        .table tbody td { border-color: rgba(255,255,255,.06); }
+        .badge-ok { background: rgba(64,224,163,.12); color: #aef5dc; border: 1px solid rgba(64,224,163,.35) }
+        .badge-warn { background: rgba(255,209,102,.12); color: #ffe9b3; border: 1px solid rgba(255,209,102,.35) }
+        .badge-crit { background: rgba(255,122,122,.12); color: #ffdede; border: 1px solid rgba(255,122,122,.35) }
+        .btn-outline-brand { border-color: #5dd5ff; color: #5dd5ff }
+        .btn-outline-brand:hover { background: #5dd5ff; color: #0b1220 }
+        .btn-brand { background: linear-gradient(180deg, rgba(93,213,255,.25), rgba(93,213,255,.08)); border-color: rgba(93,213,255,.35); color: #e6fcff }
+        .muted { color: #9eb3c9 }
+        .smallcaps { letter-spacing: .04em; text-transform: uppercase; font-size: .75rem; color: #9eb3c9 }
+        .table-hover tbody tr:hover { background: rgba(255,255,255,.03); }
+        .toast-container { z-index: 2000; }
+    </style>
+</head>
+<body>
+    <!-- NAVBAR -->
+    <nav class="navbar navbar-expand-lg navbar-dark shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-semibold" href="#">
+                <i class="bi-shield-lock me-2"></i><span class="brand-gradient">ZenGuard</span> 
+            </a>
+            <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-brand" onclick="refreshQRadar()"><i class="bi-cloud-arrow-down me-1"></i>Pull from SIEMs</button>
+                <button class="btn btn-sm btn-outline-brand" onclick="simulate('normal')"><i class="bi-activity me-1"></i>Simulate Normal</button>
+                <button class="btn btn-sm btn-outline-warning" onclick="simulate('privilege_escalation')"><i class="bi-person-gear me-1"></i>Privilege Escalation</button>
+                <button class="btn btn-sm btn-outline-danger" onclick="simulate('session_hijack')"><i class="bi-person-x me-1"></i>Session Hijack</button>
+                <button class="btn btn-sm btn-outline-light" onclick="attackDrill()"><i class="bi-lightning"></i> Attack Drill</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container py-4">
+        <!-- KPIs -->
+        <div class="row g-3">
+            <div class="col-md-4">
+                <div class="card p-3">
+                    <div class="smallcaps">Events (last fetch)</div>
+                    <div id="kpi-events" class="fs-2 fw-bold">—</div>
+                    <div class="muted">From QRadar/Splunk/Elastic & simulated sources</div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card p-3">
+                    <div class="smallcaps">High Risk (≥ 75)</div>
+                    <div id="kpi-high" class="fs-2 fw-bold">—</div>
+                    <div class="muted">Context-aware anomalies flagged by UEBA</div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card p-3">
+                    <div class="smallcaps">Recent Risk Sparkline</div>
+                    <canvas id="sparkChart" height="64"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- GRID -->
+        <div class="row g-3 mt-1">
+            <div class="col-lg-8">
+                <div class="card p-3">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <h5 class="mb-2">Live Events</h5>
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="smallcaps">Risk Distribution</div>
+                            <div style="width: 170px;"><canvas id="distChart" height="120"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="table-responsive" style="max-height: 460px; overflow:auto;">
+                        <table class="table table-hover align-middle">
+                            <thead class="sticky-top bg-transparent">
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Time</th>
+                                    <th>User</th>
+                                    <th>Device</th>
+                                    <th>Type</th>
+                                    <th>Risk</th>
+                                    <th>Verdict</th>
+                                    <th class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rows"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-4">
+                <!-- UEBA & SOAR Panel -->
+                <div class="card p-3 mb-3">
+                    <h5 class="mb-2">UEBA & SOAR Panel</h5>
+                    <div id="panel" class="muted">Select an event to see risk explanation and trigger responses.</div>
+                </div>
+                <!-- Action Log -->
+                <div class="card p-3">
+                    <h5 class="mb-2">Action Log</h5>
+                    <div id="log" class="small" style="max-height: 220px; overflow:auto; white-space: pre-wrap; color: #e6ecf5;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Event Modal -->
+    <div class="modal fade" id="eventModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-scrollable modal-lg">
+            <div class="modal-content" style="background:#0f1a33; color:#e6ecf5; border:1px solid rgba(255,255,255,.08)">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi-clipboard-data me-2"></i>Event Details</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div id="eventBody" class="modal-body small"></div>
+                <div class="modal-footer">
+                    <button class="btn btn-outline-warning" onclick="act('enforce_mfa')"><i class="bi-shield-lock"></i> Enforce MFA</button>
+                    <button class="btn btn-outline-danger" onclick="act('isolate_endpoint')"><i class="bi-pc"></i> Isolate Endpoint</button>
+                    <button class="btn btn-outline-light" onclick="act('block_ip')"><i class="bi-slash-circle"></i> Block IP</button>
+                    <button class="btn btn-brand" onclick="autoRespond()"><i class="bi-magic"></i> Auto-Respond (ZTA)</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toasts -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3">
+        <div id="toast" class="toast align-items-center text-bg-dark border-0" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="d-flex">
+                <div id="toastBody" class="toast-body">Action completed.</div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let current = null;
+        let sparkData = [];
+        let sparkChart = null, distChart = null;
+
+        function riskBadge(r) {
+            if (r >= 75) return '<span class="badge badge-crit">crit</span>';
+            if (r <= 40) return '<span class="badge badge-ok">ok</span>';
+            return '<span class="badge badge-warn">warn</span>';
+        }
+
+        function showToast(msg) {
+            document.getElementById('toastBody').textContent = msg;
+            new bootstrap.Toast(document.getElementById('toast')).show();
+        }
+
+        async function load() {
+            const r = await fetch('/api/events');
+            const data = await r.json();
+            const tbody = document.getElementById('rows');
+            tbody.innerHTML = '';
+            let high = 0, low = 0, mid = 0;
+
+            (data.events || []).forEach(ev => {
+                const risk = Math.round(ev.risk || 0);
+                if (risk >= 75) high++; else if (risk <= 40) low++; else mid++;
+
+                const tr = document.createElement('tr');
+                if (risk >= 75) tr.style.background = 'rgba(255,122,122,.06)';
+                else if (risk <= 40) tr.style.background = 'rgba(64,224,163,.05)';
+                else tr.style.background = 'transparent';
+                tr.innerHTML = `
+                  <td>${ev.id}</td>
+                  <td>${new Date((ev.timestamp || 0) * 1000).toLocaleTimeString()}</td>
+                  <td>${ev.user || ''}</td>
+                  <td>${ev.device || ''}</td>
+                  <td>${ev.event_type || ''}</td>
+                  <td>${riskBadge(risk)} <span class="ms-1">${risk}</span></td>
+                  <td>${ev.verdict || ''}</td>
+                  <td class="text-end">
+                    <button type="button" class="btn btn-sm btn-outline-light"
+                            onclick="event.stopPropagation(); selectEvent(${ev.id})" aria-label="Inspect ${ev.id}">
+                      <i class="bi-eye"></i>
+                    </button>
+                  </td>`;
+                tr.style.cursor = 'pointer';
+                tr.addEventListener('click', () => selectEvent(ev.id));
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('kpi-events').textContent = (data.events || []).length;
+            document.getElementById('kpi-high').textContent = high;
+
+            if ((data.events || []).length) {
+                const last = data.events[0].risk || 0;
+                sparkData.push(last); if (sparkData.length > 40) sparkData.shift();
+            }
+            renderSpark();
+            renderDist(low, mid, high);
+            loadLog();
+        }
+
+        async function loadLog() {
+            const r = await fetch('/api/actions');
+            const data = await r.json();
+            const box = document.getElementById('log');
+            box.textContent = (data.log || []).map(x => `[#${x.event_id}] ${new Date(x.ts * 1000).toLocaleTimeString()} → ${x.action} :: ${x.note}`).join('\\n');
+        }
+
+        async function selectEvent(id) {
+            const r = await fetch(`/api/event/${id}`);
+            const ev = await r.json();
+            current = ev.id;
+            const feat = ev.features || {};
+            const fmt = (v, d = 0) => {
+                const n = Number(v);
+                return Number.isFinite(n) ? n.toFixed(d) : '0';
+            };
+            const html = `
+              <div class="row mb-2">
+                <div class="col"><div class="smallcaps">Event</div><div class="fw-semibold">#${ev.id} — ${ev.event_type || ''}</div></div>
+                <div class="col"><div class="smallcaps">User</div><div>${ev.user || ''}</div></div>
+                <div class="col"><div class="smallcaps">Device</div><div>${ev.device || ''}</div></div>
+                <div class="col"><div class="smallcaps">Risk</div><div>${Math.round(ev.risk || 0)} (${ev.verdict || ''})</div></div>
+              </div>
+              <div class="border-top border-secondary pt-2">
+                <div class="smallcaps mb-2">UEBA Features</div>
+                <div class="row g-2 small">
+                  <div class="col-md-4">session_duration: ${fmt(feat.session_duration, 1)}</div>
+                  <div class="col-md-4">failed_logins: ${fmt(feat.failed_logins, 0)}</div>
+                  <div class="col-md-4">access_hour: ${fmt(feat.access_hour, 1)}</div>
+                  <div class="col-md-4">device_trust: ${fmt(feat.device_trust, 2)}</div>
+                  <div class="col-md-4">privilege_change: ${fmt(feat.privilege_change, 0)}</div>
+                  <div class="col-md-4">external_conn: ${fmt(feat.external_conn, 0)}</div>
+                  <div class="col-md-4">mfa_bypass: ${fmt(feat.mfa_bypass, 0)}</div>
+                </div>
+              </div>`;
+            document.getElementById('eventBody').innerHTML = html;
+            new bootstrap.Modal(document.getElementById('eventModal')).show();
+        }
+
+        async function act(action) {
+            if (!current) return;
+            await fetch('/api/respond', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event_id: current, action }) });
+            showToast('Action sent: ' + action);
+            loadLog();
+        }
+
+        async function autoRespond() {
+            if (!current) return;
+            const r = await fetch(`/api/event/${current}`);
+            const ev = await r.json();
+            await fetch('/api/respond/auto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: ev }) });
+            showToast('Auto-respond executed by ZTA policy');
+            loadLog();
+        }
+
+        async function simulate(kind) {
+            await fetch('/api/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind }) });
+            load();
+        }
+
+        async function refreshQRadar() {
+            await fetch('/api/refresh', { method: 'POST' });
+            load();
+            showToast('Pulled recent items from configured SIEM(s).');
+        }
+
+        async function attackDrill() {
+            await fetch('/api/scenario/attack_drill', { method: 'POST' });
+            load();
+            showToast('Attack drill populated (3 events).');
+        }
+
+        function renderSpark() {
+            const ctx = document.getElementById('sparkChart');
+            const labels = sparkData.map((_, i) => i + 1);
+            if (!sparkChart) {
+                sparkChart = new Chart(ctx, {
+                    type: 'line',
+                    data: { labels, datasets: [{ data: sparkData, tension: .35 }] },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { display: false } },
+                        scales: { x: { display: false }, y: { display: false } },
+                        elements: { point: { radius: 0 } }
+                    }
+                });
+            } else {
+                sparkChart.data.labels = labels;
+                sparkChart.data.datasets[0].data = sparkData;
+                sparkChart.update();
+            }
+        }
+
+        function renderDist(low, mid, high) {
+            const ctx = document.getElementById('distChart');
+            const data = [low, mid, high];
+            if (!distChart) {
+                distChart = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: { labels: ['Low', 'Medium', 'High'], datasets: [{ data }] },
+                    options: { plugins: { legend: { labels: { color: '#e6ecf5' } } }, cutout: '65%' }
+                });
+            } else {
+                distChart.data.datasets[0].data = data;
+                distChart.update();
+            }
+        }
+
+        load();
+        setInterval(load, 4000);
+    </script>
+</body>
+</html>
